@@ -21,3 +21,16 @@ export function serializeDocumentToSvgString(doc) {
   return `<?xml version="1.0" encoding="UTF-8"?>\n${xml}\n`;
 }
 
+export function serializeAssetsToSpriteString(assetsById) {
+  const root = svgEl("svg", {
+    xmlns: "http://www.w3.org/2000/svg",
+    "xmlns:xlink": "http://www.w3.org/1999/xlink"
+  });
+
+  const defs = svgEl("defs");
+  renderAssetsToDefs(assetsById ?? {}, defs);
+  root.appendChild(defs);
+
+  const xml = new XMLSerializer().serializeToString(root);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n${xml}\n`;
+}

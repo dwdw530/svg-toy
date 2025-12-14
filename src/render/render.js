@@ -1,4 +1,3 @@
-import { parseViewBoxString } from "../model/parsers.js";
 import { clearChildren, svgEl } from "./svg.js";
 
 function applyStyleAttrs(el, style) {
@@ -13,8 +12,10 @@ export function renderAssetsToDefs(assetsById, defsEl) {
   clearChildren(defsEl);
   for (const asset of Object.values(assetsById ?? {})) {
     const symbol = svgEl("symbol", {
-      id: `asset-${asset.id}`,
-      viewBox: asset.viewBox
+      id: asset.id,
+      viewBox: asset.viewBox,
+      "data-name": asset.name,
+      "data-source": asset.meta?.sourceFileName
     });
     symbol.innerHTML = asset.innerMarkup;
     defsEl.appendChild(symbol);
@@ -74,7 +75,7 @@ function renderTextNode(node, { forExport }) {
 
 function renderUseNode(node, { forExport }) {
   const el = svgEl("use", {
-    href: `#asset-${node.data.assetId}`,
+    href: `#${node.data.assetId}`,
     x: node.transform.x,
     y: node.transform.y,
     width: node.data.width,
@@ -85,8 +86,7 @@ function renderUseNode(node, { forExport }) {
     el.classList.add("shape");
     el.dataset.nodeId = node.id;
     el.dataset.nodeType = node.type;
-    const vb = parseViewBoxString(node.data.viewBox ?? "");
-    if (vb) el.dataset.assetViewBox = `${vb.x} ${vb.y} ${vb.w} ${vb.h}`;
+    el.dataset.assetId = node.data.assetId;
   }
   return el;
 }
@@ -106,4 +106,3 @@ export function renderSceneNodes(nodes, selectionNodeIds, sceneEl, { forExport =
     sceneEl.appendChild(el);
   }
 }
-

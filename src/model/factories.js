@@ -95,13 +95,13 @@ export function createUseNode({ assetId, x, y, width, height, style } = {}) {
   };
 }
 
-export function createAsset({ id = createId("asset"), name, viewBox, innerMarkup, meta } = {}) {
+export function createAsset({ id = createId("asset"), name, viewBox, innerMarkup, meta, archived = false } = {}) {
   return {
     id: String(id),
     name: String(name ?? id),
     viewBox: String(viewBox ?? "0 0 100 100"),
     innerMarkup: String(innerMarkup ?? ""),
-    meta: meta ? { ...meta } : {}
+    meta: meta ? { ...meta } : {},
+    archived: Boolean(archived)
   };
 }
-

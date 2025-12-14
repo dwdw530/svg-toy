@@ -19,6 +19,7 @@
           <button class="btn" id="btnAddText" type="button">文字</button>
           <span class="sep" aria-hidden="true"></span>
           <button class="btn" id="btnExportSvg" type="button">导出 SVG</button>
+          <button class="btn" id="btnExportSprite" type="button">导出 Sprite</button>
           <button class="btn btn-ghost" id="btnReset" type="button">重置</button>
         </div>
       </header>
@@ -29,6 +30,9 @@
 
           <div class="asset-controls">
             <button class="btn" id="btnImportSvg" type="button">导入 SVG</button>
+            <button class="btn" id="btnRenameAsset" type="button">重命名</button>
+            <button class="btn btn-ghost" id="btnDeleteAsset" type="button">删除</button>
+            <button class="btn btn-ghost" id="btnClearAssets" type="button">清空资产库</button>
             <button class="btn btn-ghost" id="btnClearPlacement" type="button">取消放置</button>
             <input id="fileImportSvg" type="file" accept=".svg" multiple hidden />
           </div>
@@ -43,11 +47,17 @@
             <div class="readonly" id="assetSelectedInfo">（未选择）</div>
           </div>
 
+          <div class="field">
+            <label for="assetSearch">搜索</label>
+            <input id="assetSearch" type="text" placeholder="按名称/文件名过滤" />
+          </div>
+
           <div class="asset-list" id="assetList" role="list" aria-label="资产列表"></div>
 
           <div class="footer">
             <div class="muted">
               提示：点一个资产，然后在画布空白处单击放置（需要平移就按住空格）。
+              删除/清空资产库不会删除画布实例；要删画布内容请选中后按 Delete。
             </div>
           </div>
         </aside>

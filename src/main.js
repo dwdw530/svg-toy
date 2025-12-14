@@ -2,7 +2,11 @@ import { createEmptyDocument } from "./model/document.js";
 import {
   addNode,
   clearSelection,
+  archiveAssets,
+  deleteAssets,
   deleteSelectedNodes,
+  purgeUnusedArchivedAssets,
+  renameAsset,
   resetCanvas,
   setSelection,
   setSettings,
@@ -18,7 +22,7 @@ import { clamp, formatViewBox, parseViewBoxString } from "./model/parsers.js";
 import { clientToSvgPoint, zoomViewBoxAtPoint } from "./interaction/viewport.js";
 import { parseSvgTextToAsset } from "./interaction/svgImport.js";
 import { renderAssetsToDefs, renderSceneNodes } from "./render/render.js";
-import { serializeDocumentToSvgString } from "./render/serialize.js";
+import { serializeAssetsToSpriteString, serializeDocumentToSvgString } from "./render/serialize.js";
 
 const svg = document.getElementById("svgCanvas");
 const scene = document.getElementById("scene");
@@ -28,13 +32,18 @@ const btnAddRect = document.getElementById("btnAddRect");
 const btnAddCircle = document.getElementById("btnAddCircle");
 const btnAddText = document.getElementById("btnAddText");
 const btnExportSvg = document.getElementById("btnExportSvg");
+const btnExportSprite = document.getElementById("btnExportSprite");
 const btnReset = document.getElementById("btnReset");
 
 const btnImportSvg = document.getElementById("btnImportSvg");
+const btnRenameAsset = document.getElementById("btnRenameAsset");
+const btnDeleteAsset = document.getElementById("btnDeleteAsset");
+const btnClearAssets = document.getElementById("btnClearAssets");
 const btnClearPlacement = document.getElementById("btnClearPlacement");
 const fileImportSvg = document.getElementById("fileImportSvg");
 const placementSizeInput = document.getElementById("placementSize");
 const assetSelectedInfo = document.getElementById("assetSelectedInfo");
+const assetSearchInput = document.getElementById("assetSearch");
 const assetList = document.getElementById("assetList");
 
 const selectedInfo = document.getElementById("selectedInfo");
@@ -54,6 +63,7 @@ const app = {
   panning: null,
   spaceDown: false,
   activeAssetId: null,
+  assetSearch: "",
   history: {
     past: [],
     future: [],
@@ -61,7 +71,8 @@ const app = {
   },
   renderCache: {
     assetsRef: null,
-    activeAssetId: null
+    activeAssetId: null,
+    assetSearch: ""
   }
 };
 
@@ -72,13 +83,16 @@ function pushHistorySnapshot(doc) {
 }
 
 function normalizeUiStateAfterDocChange() {
-  if (app.activeAssetId && !app.doc.assets?.[app.activeAssetId]) app.activeAssetId = null;
+  if (!app.activeAssetId) return;
+  const asset = app.doc.assets?.[app.activeAssetId];
+  if (!asset || asset.archived) app.activeAssetId = null;
 }
 
 function commit(nextDoc, { recordHistory = true } = {}) {
-  if (nextDoc === app.doc) return;
+  const docToCommit = recordHistory ? purgeUnusedArchivedAssets(nextDoc) : nextDoc;
+  if (docToCommit === app.doc) return;
   if (recordHistory) pushHistorySnapshot(app.doc);
-  app.doc = nextDoc;
+  app.doc = docToCommit;
   normalizeUiStateAfterDocChange();
   render();
 }
@@ -155,6 +169,114 @@ function downloadSvg() {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+function downloadSprite() {
+  const assets = Object.fromEntries(
+    Object.entries(app.doc.assets ?? {}).filter(([, asset]) => !asset?.archived)
+  );
+  const count = Object.keys(assets).length;
+  if (!count) {
+    window.alert("资产库是空的，没啥可导出 Sprite。");
+    return;
+  }
+
+  const data = serializeAssetsToSpriteString(assets);
+  const blob = new Blob([data], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `sprite-${new Date().toISOString().replace(/[:.]/g, "-")}.svg`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function renameActiveAsset() {
+  const assetId = app.activeAssetId;
+  if (!assetId) {
+    window.alert("先选一个资产再重命名。");
+    return;
+  }
+
+  const asset = app.doc.assets?.[assetId];
+  if (!asset || asset.archived) {
+    app.activeAssetId = null;
+    render();
+    return;
+  }
+
+  const next = window.prompt("资产名称：", asset.name ?? assetId);
+  if (next === null) return;
+  commit(renameAsset(app.doc, assetId, next));
+}
+
+function deleteActiveAsset() {
+  const assetId = app.activeAssetId;
+  if (!assetId) {
+    window.alert("先选一个资产再删除。");
+    return;
+  }
+
+  const asset = app.doc.assets?.[assetId];
+  if (!asset || asset.archived) {
+    app.activeAssetId = null;
+    render();
+    return;
+  }
+
+  const instanceCount = app.doc.nodes.filter((n) => n.type === "use" && n.data.assetId === assetId).length;
+
+  if (instanceCount > 0) {
+    const ok = window.confirm(
+      `确认从资产库移除「${asset.name}」？\n\n画布上的 ${instanceCount} 个实例会保留（仍可选中并 Delete 删除）。`
+    );
+    if (!ok) return;
+    app.activeAssetId = null;
+    commit(archiveAssets(app.doc, [assetId]));
+    return;
+  }
+
+  const ok = window.confirm(`确认删除资产「${asset.name}」？`);
+  if (!ok) return;
+  app.activeAssetId = null;
+  commit(deleteAssets(app.doc, [assetId], { removeInstances: false }));
+}
+
+function clearAllAssets() {
+  const ids = Object.keys(app.doc.assets ?? {});
+  if (!ids.length) {
+    window.alert("资产库已经是空的。");
+    return;
+  }
+
+  const usedIdSet = new Set(
+    app.doc.nodes.filter((n) => n.type === "use").map((n) => String(n.data.assetId ?? "")).filter(Boolean)
+  );
+  const instanceCount = app.doc.nodes.filter((n) => n.type === "use" && usedIdSet.has(String(n.data.assetId ?? ""))).length;
+
+  const toArchive = [];
+  const toDelete = [];
+  for (const id of ids) {
+    const asset = app.doc.assets?.[id];
+    if (!asset) continue;
+    if (usedIdSet.has(id)) toArchive.push(id);
+    else toDelete.push(id);
+  }
+
+  const ok = window.confirm(
+    `确认清空资产库？\n\n将从资产库移除 ${ids.length} 个资产；画布上的 ${instanceCount} 个实例会保留。\n\n未使用的资产会被彻底删除，仍在使用的资产会被隐藏（实例删掉后会自动清理）。`
+  );
+  if (!ok) return;
+
+  app.activeAssetId = null;
+  app.assetSearch = "";
+
+  let next = app.doc;
+  if (toArchive.length) next = archiveAssets(next, toArchive);
+  if (toDelete.length) next = deleteAssets(next, toDelete, { removeInstances: false });
+  commit(next);
 }
 
 function getSelectedNodeId(doc) {
@@ -240,6 +362,14 @@ function syncPlacementInfo() {
   if (!assetSelectedInfo) return;
   const asset = app.activeAssetId ? app.doc.assets[app.activeAssetId] : null;
   assetSelectedInfo.textContent = asset ? `${asset.name}` : "（未选择）";
+
+  const canManageActive = Boolean(asset && !asset.archived);
+  const libraryCount = Object.values(app.doc.assets ?? {}).filter((a) => a && !a.archived).length;
+
+  if (btnRenameAsset) btnRenameAsset.disabled = !canManageActive;
+  if (btnDeleteAsset) btnDeleteAsset.disabled = !canManageActive;
+  if (btnClearAssets) btnClearAssets.disabled = libraryCount === 0;
+  if (btnClearPlacement) btnClearPlacement.disabled = !app.activeAssetId;
 }
 
 function mergeHistoryDoc(nextDoc, currentDoc) {
@@ -271,12 +401,20 @@ function renderAssetList() {
   if (!assetList) return;
 
   assetList.textContent = "";
-  const assets = Object.values(app.doc.assets ?? {});
+  const query = String(app.assetSearch ?? "").trim().toLowerCase();
+  let assets = Object.values(app.doc.assets ?? {}).filter((asset) => asset && !asset.archived);
+  if (query) {
+    assets = assets.filter((asset) => {
+      const name = String(asset.name ?? "").toLowerCase();
+      const fileName = String(asset.meta?.sourceFileName ?? "").toLowerCase();
+      return name.includes(query) || fileName.includes(query);
+    });
+  }
 
   if (!assets.length) {
     const empty = document.createElement("div");
     empty.className = "muted";
-    empty.textContent = "（空）";
+    empty.textContent = query ? "（无匹配）" : "（空）";
     assetList.appendChild(empty);
     return;
   }
@@ -325,21 +463,30 @@ function render() {
   if (placementSizeInput && document.activeElement !== placementSizeInput) {
     placementSizeInput.value = String(Number(app.doc.settings?.placementSize ?? 128));
   }
+  if (assetSearchInput && document.activeElement !== assetSearchInput) {
+    assetSearchInput.value = String(app.assetSearch ?? "");
+  }
 
   const assetsChanged = app.renderCache.assetsRef !== app.doc.assets;
   const activeAssetChanged = app.renderCache.activeAssetId !== app.activeAssetId;
+  const assetSearchChanged = app.renderCache.assetSearch !== app.assetSearch;
 
   if (assetsChanged) {
     renderAssetsToDefs(app.doc.assets, assetDefs);
-    renderAssetList();
     app.renderCache.assetsRef = app.doc.assets;
-  } else if (activeAssetChanged) {
-    renderAssetList();
   }
+
+  if (assetsChanged || activeAssetChanged || assetSearchChanged) renderAssetList();
 
   syncPlacementInfo();
   app.renderCache.activeAssetId = app.activeAssetId;
+  app.renderCache.assetSearch = app.assetSearch;
   exportPreview.value = serializeDocumentToSvgString(app.doc);
+
+  if (btnExportSprite) {
+    const libraryCount = Object.values(app.doc.assets ?? {}).filter((a) => a && !a.archived).length;
+    btnExportSprite.disabled = libraryCount === 0;
+  }
 }
 
 function selectNode(nodeId) {
@@ -446,11 +593,20 @@ btnAddRect.addEventListener("click", addRect);
 btnAddCircle.addEventListener("click", addCircle);
 btnAddText.addEventListener("click", addText);
 btnExportSvg.addEventListener("click", downloadSvg);
+btnExportSprite?.addEventListener("click", downloadSprite);
 btnReset.addEventListener("click", resetAll);
 
 btnImportSvg?.addEventListener("click", () => fileImportSvg?.click());
+btnRenameAsset?.addEventListener("click", renameActiveAsset);
+btnDeleteAsset?.addEventListener("click", deleteActiveAsset);
+btnClearAssets?.addEventListener("click", clearAllAssets);
 btnClearPlacement?.addEventListener("click", () => {
   app.activeAssetId = null;
+  render();
+});
+
+assetSearchInput?.addEventListener("input", () => {
+  app.assetSearch = String(assetSearchInput.value ?? "");
   render();
 });
 

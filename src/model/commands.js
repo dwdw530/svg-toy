@@ -95,6 +95,79 @@ export function upsertAssets(doc, assets) {
   return { ...doc, assets: nextAssets };
 }
 
+export function renameAsset(doc, assetId, nextName) {
+  const id = String(assetId ?? "");
+  if (!id) return doc;
+  const asset = doc.assets?.[id];
+  if (!asset) return doc;
+  const name = String(nextName ?? "").trim();
+  if (!name) return doc;
+  if (asset.name === name) return doc;
+  return { ...doc, assets: { ...doc.assets, [id]: { ...asset, name } } };
+}
+
+export function archiveAssets(doc, assetIds) {
+  const ids = uniqStrings(assetIds ?? []);
+  if (!ids.length) return doc;
+
+  const nextAssets = { ...doc.assets };
+  let changed = false;
+
+  for (const id of ids) {
+    const asset = nextAssets[id];
+    if (!asset || asset.archived) continue;
+    nextAssets[id] = { ...asset, archived: true };
+    changed = true;
+  }
+
+  return changed ? { ...doc, assets: nextAssets } : doc;
+}
+
+export function deleteAssets(doc, assetIds, { removeInstances = true } = {}) {
+  const ids = uniqStrings(assetIds ?? []);
+  if (!ids.length) return doc;
+  const idSet = new Set(ids);
+
+  const nextAssets = { ...doc.assets };
+  let removedAny = false;
+  for (const id of ids) {
+    if (nextAssets[id] !== undefined) {
+      delete nextAssets[id];
+      removedAny = true;
+    }
+  }
+  if (!removedAny) return doc;
+
+  const nextNodes = removeInstances
+    ? doc.nodes.filter((n) => !(n.type === "use" && idSet.has(String(n.data.assetId ?? ""))))
+    : doc.nodes;
+
+  const nodeIdSet = new Set(nextNodes.map((n) => n.id));
+  const nextSelection = { nodeIds: (doc.selection?.nodeIds ?? []).filter((id) => nodeIdSet.has(id)) };
+
+  return { ...doc, assets: nextAssets, nodes: nextNodes, selection: nextSelection };
+}
+
+export function purgeUnusedArchivedAssets(doc) {
+  const used = new Set();
+  for (const node of doc.nodes ?? []) {
+    if (node.type !== "use") continue;
+    const assetId = String(node.data?.assetId ?? "");
+    if (assetId) used.add(assetId);
+  }
+
+  let changed = false;
+  const nextAssets = { ...doc.assets };
+  for (const [id, asset] of Object.entries(nextAssets)) {
+    if (!asset?.archived) continue;
+    if (used.has(id)) continue;
+    delete nextAssets[id];
+    changed = true;
+  }
+
+  return changed ? { ...doc, assets: nextAssets } : doc;
+}
+
 function scaleNodeInner(node, factor, { minSize, maxSize }) {
   if (!node) return node;
   const f = Number(factor);
