@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SVG Playground</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="title">SVG Playground</div>
+          <div class="subtitle">零依赖 · 拖拽 · 缩放 · 导出</div>
+        </div>
+        <div class="toolbar" role="toolbar" aria-label="工具栏">
+          <button class="btn" id="btnAddRect" type="button">矩形</button>
+          <button class="btn" id="btnAddCircle" type="button">圆形</button>
+          <button class="btn" id="btnAddText" type="button">文字</button>
+          <span class="sep" aria-hidden="true"></span>
+          <button class="btn" id="btnExportSvg" type="button">导出 SVG</button>
+          <button class="btn btn-ghost" id="btnReset" type="button">重置</button>
+        </div>
+      </header>
+
+      <main class="main">
+        <aside class="assets" aria-label="资产库">
+          <div class="panel-title">资产库</div>
+
+          <div class="asset-controls">
+            <button class="btn" id="btnImportSvg" type="button">导入 SVG</button>
+            <button class="btn btn-ghost" id="btnClearPlacement" type="button">取消放置</button>
+            <input id="fileImportSvg" type="file" accept=".svg" multiple hidden />
+          </div>
+
+          <div class="field">
+            <label for="placementSize">放置尺寸</label>
+            <input id="placementSize" type="number" min="8" step="1" value="128" />
+          </div>
+
+          <div class="field">
+            <label>当前放置</label>
+            <div class="readonly" id="assetSelectedInfo">（未选择）</div>
+          </div>
+
+          <div class="asset-list" id="assetList" role="list" aria-label="资产列表"></div>
+
+          <div class="footer">
+            <div class="muted">
+              提示：点一个资产，然后在画布空白处单击放置（需要平移就按住空格）。
+            </div>
+          </div>
+        </aside>
+
+        <section class="canvas-panel" aria-label="画布">
+          <div class="canvas-wrap">
+            <svg
+              id="svgCanvas"
+              viewBox="0 0 800 600"
+              xmlns="http://www.w3.org/2000/svg"
+              role="img"
+              aria-label="SVG 画布"
+            >
+              <defs>
+                <pattern
+                  id="grid"
+                  width="40"
+                  height="40"
+                  patternUnits="userSpaceOnUse"
+                >
+                  <path
+                    d="M 40 0 L 0 0 0 40"
+                    fill="none"
+                    stroke="rgba(255,255,255,0.08)"
+                    stroke-width="1"
+                  />
+                </pattern>
+              </defs>
+              <defs id="assetDefs"></defs>
+              <rect x="-2000" y="-2000" width="5000" height="5000" fill="#0b1020" />
+              <rect x="-2000" y="-2000" width="5000" height="5000" fill="url(#grid)" />
+              <g id="scene"></g>
+            </svg>
+          </div>
+          <div class="hint">
+            <span class="kbd">滚轮</span> 缩放画布
+            <span class="dot">·</span>
+            <span class="kbd">Shift</span> + <span class="kbd">滚轮</span> 缩放选中
+            <span class="dot">·</span>
+            <span class="kbd">空格</span> + 拖拽 平移
+            <span class="dot">·</span>
+            <span class="kbd">Ctrl</span> + <span class="kbd">Z</span> 撤销
+            <span class="dot">·</span>
+            <span class="kbd">Ctrl</span> + <span class="kbd">Y</span> 重做
+            <span class="dot">·</span>
+            <span class="kbd">Delete</span> 删除
+          </div>
+        </section>
+
+        <aside class="inspector" aria-label="属性面板">
+          <div class="panel-title">属性</div>
+
+          <div class="field">
+            <label>选中</label>
+            <div class="readonly" id="selectedInfo">（无）</div>
+          </div>
+
+          <div class="grid-2">
+            <div class="field">
+              <label for="posX">X</label>
+              <input id="posX" type="number" step="1" />
+            </div>
+            <div class="field">
+              <label for="posY">Y</label>
+              <input id="posY" type="number" step="1" />
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="field">
+              <label for="fill">填充</label>
+              <input id="fill" type="color" value="#4f8cff" />
+            </div>
+            <div class="field">
+              <label for="stroke">描边</label>
+              <input id="stroke" type="color" value="#e6e8ff" />
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="field">
+              <label for="strokeWidth">描边宽</label>
+              <input id="strokeWidth" type="number" min="0" step="1" value="2" />
+            </div>
+            <div class="field">
+              <label for="opacity">透明度</label>
+              <input id="opacity" type="number" min="0" max="1" step="0.05" value="1" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="textValue">文字内容（仅文字）</label>
+            <input id="textValue" type="text" placeholder="选中文字后可编辑" />
+          </div>
+
+          <div class="field">
+            <label for="textFontSize">文字大小（仅文字）</label>
+            <input id="textFontSize" type="number" min="1" step="1" value="42" />
+          </div>
+
+          <div class="field">
+            <label for="exportPreview">当前 SVG（只读）</label>
+            <textarea id="exportPreview" rows="10" spellcheck="false" readonly></textarea>
+          </div>
+
+          <div class="footer">
+            <div class="muted">
+              提示：这是个骨架项目，你要做图标库/动画/编辑器我都能继续往下砸。
+            </div>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

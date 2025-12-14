@@ -1,0 +1,10 @@
+{
+  "name": "svg-playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "start": "node scripts/dev.mjs"
+  }
+}
+
