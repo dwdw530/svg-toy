@@ -52,6 +52,12 @@ const assetSelectedInfo = document.getElementById("assetSelectedInfo");
 const assetSearchInput = document.getElementById("assetSearch");
 const assetList = document.getElementById("assetList");
 
+// 面板收起/展开
+const assetsPanel = document.getElementById("assetsPanel");
+const inspectorPanel = document.getElementById("inspectorPanel");
+const btnCollapseAssets = document.getElementById("btnCollapseAssets");
+const btnCollapseInspector = document.getElementById("btnCollapseInspector");
+
 const selectedInfo = document.getElementById("selectedInfo");
 const posXInput = document.getElementById("posX");
 const posYInput = document.getElementById("posY");
@@ -855,6 +861,19 @@ btnAddText.addEventListener("click", addText);
 btnExportSvg.addEventListener("click", downloadSvg);
 btnExportSprite?.addEventListener("click", downloadSprite);
 btnReset.addEventListener("click", resetAll);
+
+// 面板收起/展开
+btnCollapseAssets?.addEventListener("click", () => {
+  const isCollapsed = assetsPanel.classList.toggle("collapsed");
+  btnCollapseAssets.textContent = isCollapsed ? "›" : "‹";
+  btnCollapseAssets.title = isCollapsed ? "展开资产库" : "收起资产库";
+});
+
+btnCollapseInspector?.addEventListener("click", () => {
+  const isCollapsed = inspectorPanel.classList.toggle("collapsed");
+  btnCollapseInspector.textContent = isCollapsed ? "‹" : "›";
+  btnCollapseInspector.title = isCollapsed ? "展开属性面板" : "收起属性面板";
+});
 
 btnImportSvg?.addEventListener("click", () => fileImportSvg?.click());
 btnExportAssetPack?.addEventListener("click", downloadAssetPack);

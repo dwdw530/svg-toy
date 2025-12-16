@@ -24,8 +24,11 @@
       </header>
 
       <main class="main">
-        <aside class="assets" aria-label="资产库">
-          <div class="panel-title">资产库</div>
+        <aside class="assets" aria-label="资产库" id="assetsPanel">
+          <div class="panel-header">
+            <div class="panel-title">资产库</div>
+            <button class="btn-collapse" id="btnCollapseAssets" type="button" title="收起资产库">‹</button>
+          </div>
 
           <div class="asset-controls">
             <button class="btn" id="btnImportSvg" type="button">导入 SVG</button>
@@ -138,8 +141,11 @@
           </div>
         </section>
 
-        <aside class="inspector" aria-label="属性面板">
-          <div class="panel-title">属性</div>
+        <aside class="inspector" aria-label="属性面板" id="inspectorPanel">
+          <div class="panel-header">
+            <div class="panel-title">属性</div>
+            <button class="btn-collapse" id="btnCollapseInspector" type="button" title="收起属性面板">›</button>
+          </div>
 
           <div class="field">
             <label>选中</label>

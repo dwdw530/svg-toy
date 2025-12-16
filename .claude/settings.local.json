@@ -8,7 +8,16 @@
       "Bash(node --check:*)",
       "Skill(context-save)",
       "Skill(frontend-design)",
-      "Bash(bash -c \"mkdir -p ''D:/vscode_workspace/svg_project/docs/context-sessions''\")"
+      "Bash(bash -c \"mkdir -p ''D:/vscode_workspace/svg_project/docs/context-sessions''\")",
+      "mcp__serena__get_symbols_overview",
+      "mcp__chrome-devtools__list_pages",
+      "mcp__chrome-devtools__new_page",
+      "mcp__chrome-devtools__take_screenshot",
+      "mcp__chrome-devtools__take_snapshot",
+      "mcp__chrome-devtools__evaluate_script",
+      "mcp__chrome-devtools__click",
+      "mcp__chrome-devtools__list_console_messages",
+      "mcp__chrome-devtools__navigate_page"
     ]
   }
 }

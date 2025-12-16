@@ -129,13 +129,12 @@ body {
 }
 
 .main {
-  display: grid;
-  grid-template-columns: 320px 1fr 360px;
-  gap: 0;
+  display: flex;
   min-height: 0;
 }
 
 .canvas-panel {
+  flex: 1;
   min-width: 0;
   display: grid;
   grid-template-rows: 1fr auto;
@@ -193,6 +192,9 @@ body {
 }
 
 .inspector {
+  position: relative;
+  width: 360px;
+  flex-shrink: 0;
   border: none;
   border-radius: 0;
   background: var(--surface);
@@ -203,7 +205,11 @@ body {
   overflow-y: auto;
 }
 
+
 .assets {
+  position: relative;
+  width: 320px;
+  flex-shrink: 0;
   border: none;
   border-radius: 0;
   background: var(--surface);
@@ -213,6 +219,7 @@ body {
   min-height: 0;
   overflow-y: auto;
 }
+
 
 .asset-controls {
   display: grid;
@@ -326,12 +333,86 @@ body {
   white-space: nowrap;
 }
 
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
 .panel-title {
   font-weight: 600;
   font-size: 13px;
   color: var(--text);
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
+}
+
+.btn-collapse {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface-elevated);
+  color: var(--text-dim);
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.btn-collapse:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 收起状态的面板样式 - 用 margin 负值隐藏，不改变布局 */
+.assets.collapsed {
+  margin-left: -280px;
+}
+
+.inspector.collapsed {
+  margin-right: -320px;
+}
+
+.assets.collapsed > *:not(.panel-header),
+.inspector.collapsed > *:not(.panel-header) {
+  visibility: hidden;
+}
+
+.assets.collapsed .panel-header,
+.inspector.collapsed .panel-header {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 40px;
+  height: 100%;
+  flex-direction: column-reverse;
+  align-items: center;
+  padding: 8px 6px;
+  gap: 8px;
+  border-bottom: none;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+}
+
+.inspector.collapsed .panel-header {
+  left: 0;
+  right: auto;
+  border-left: none;
+  border-right: 1px solid var(--border);
+}
+
+.assets.collapsed .panel-title,
+.inspector.collapsed .panel-title {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 12px;
 }
 
 .field {
