@@ -12,6 +12,7 @@ import {
   setSettings,
   setViewBox,
   scaleSelectedNodes,
+  scaleSelectedNodesAsGroup,
   upsertAssets,
   updateNodeData,
   updateNodeStyle,
@@ -21,8 +22,9 @@ import { createCircleNode, createRectNode, createTextNode, createUseNode, makeSt
 import { clamp, formatViewBox, parseViewBoxString } from "./model/parsers.js";
 import { clientToSvgPoint, zoomViewBoxAtPoint } from "./interaction/viewport.js";
 import { parseSvgTextToAsset } from "./interaction/svgImport.js";
+import { normalizeSvgInnerMarkupToCurrentColor } from "./interaction/svgColor.js";
 import { renderAssetsToDefs, renderSceneNodes } from "./render/render.js";
-import { serializeAssetsToSpriteString, serializeDocumentToSvgString } from "./render/serialize.js";
+import { serializeAssetsToSpriteString, serializeAssetsToManifest, serializeSingleAssetToSvgString, serializeDocumentToSvgString } from "./render/serialize.js";
 
 const svg = document.getElementById("svgCanvas");
 const scene = document.getElementById("scene");
@@ -37,9 +39,13 @@ const btnReset = document.getElementById("btnReset");
 
 const btnImportSvg = document.getElementById("btnImportSvg");
 const btnRenameAsset = document.getElementById("btnRenameAsset");
+const btnAssetCurrentColor = document.getElementById("btnAssetCurrentColor");
+const btnAllAssetsCurrentColor = document.getElementById("btnAllAssetsCurrentColor");
 const btnDeleteAsset = document.getElementById("btnDeleteAsset");
 const btnClearAssets = document.getElementById("btnClearAssets");
 const btnClearPlacement = document.getElementById("btnClearPlacement");
+const btnExportAssetPack = document.getElementById("btnExportAssetPack");
+const btnExportSingleAsset = document.getElementById("btnExportSingleAsset");
 const fileImportSvg = document.getElementById("fileImportSvg");
 const placementSizeInput = document.getElementById("placementSize");
 const assetSelectedInfo = document.getElementById("assetSelectedInfo");
@@ -67,7 +73,13 @@ const app = {
   history: {
     past: [],
     future: [],
-    limit: 200
+    limit: 200,
+    merge: {
+      // 输入框/滑杆等高频操作的“撤销合并”状态：避免一敲一个历史点
+      key: null,
+      baseDoc: null,
+      timerId: null
+    }
   },
   renderCache: {
     assetsRef: null,
@@ -82,6 +94,48 @@ function pushHistorySnapshot(doc) {
   app.history.future.length = 0;
 }
 
+function clearMergedHistoryTimer() {
+  const merge = app.history.merge;
+  if (!merge?.timerId) return;
+  window.clearTimeout(merge.timerId);
+  merge.timerId = null;
+}
+
+function flushMergedHistory() {
+  // 把“合并期”里记录的 baseDoc 入栈一次，形成单条撤销记录
+  const merge = app.history.merge;
+  if (!merge?.baseDoc) return;
+  clearMergedHistoryTimer();
+
+  const base = merge.baseDoc;
+  merge.baseDoc = null;
+  merge.key = null;
+
+  if (base !== app.doc) pushHistorySnapshot(base);
+}
+
+function commitMerged(nextDoc, { key, delayMs = 450 } = {}) {
+  // 合并输入：实时预览（recordHistory: false），但最终只生成 1 条撤销记录
+  if (!key) throw new Error("commitMerged 需要 key");
+  if (nextDoc === app.doc) return;
+
+  const merge = app.history.merge;
+  if (!merge) return commit(nextDoc);
+
+  if (merge.baseDoc && merge.key !== key) flushMergedHistory();
+
+  if (!merge.baseDoc) {
+    merge.baseDoc = app.doc;
+    app.history.future.length = 0;
+  }
+
+  merge.key = key;
+  commit(nextDoc, { recordHistory: false });
+
+  clearMergedHistoryTimer();
+  merge.timerId = window.setTimeout(() => flushMergedHistory(), delayMs);
+}
+
 function normalizeUiStateAfterDocChange() {
   if (!app.activeAssetId) return;
   const asset = app.doc.assets?.[app.activeAssetId];
@@ -89,6 +143,7 @@ function normalizeUiStateAfterDocChange() {
 }
 
 function commit(nextDoc, { recordHistory = true } = {}) {
+  if (recordHistory) flushMergedHistory();
   const docToCommit = recordHistory ? purgeUnusedArchivedAssets(nextDoc) : nextDoc;
   if (docToCommit === app.doc) return;
   if (recordHistory) pushHistorySnapshot(app.doc);
@@ -193,6 +248,71 @@ function downloadSprite() {
   URL.revokeObjectURL(url);
 }
 
+function downloadAssetPack() {
+  const assets = Object.fromEntries(
+    Object.entries(app.doc.assets ?? {}).filter(([, asset]) => !asset?.archived)
+  );
+  const count = Object.keys(assets).length;
+  if (!count) {
+    window.alert("资产库是空的，没啥可导出资产包。");
+    return;
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+  // 下载 sprite.svg
+  const spriteData = serializeAssetsToSpriteString(assets);
+  const spriteBlob = new Blob([spriteData], { type: "image/svg+xml;charset=utf-8" });
+  const spriteUrl = URL.createObjectURL(spriteBlob);
+  const spriteLink = document.createElement("a");
+  spriteLink.href = spriteUrl;
+  spriteLink.download = `sprite-${timestamp}.svg`;
+  document.body.appendChild(spriteLink);
+  spriteLink.click();
+  spriteLink.remove();
+  URL.revokeObjectURL(spriteUrl);
+
+  // 下载 manifest.json
+  const manifest = serializeAssetsToManifest(assets);
+  const manifestData = JSON.stringify(manifest, null, 2);
+  const manifestBlob = new Blob([manifestData], { type: "application/json;charset=utf-8" });
+  const manifestUrl = URL.createObjectURL(manifestBlob);
+  const manifestLink = document.createElement("a");
+  manifestLink.href = manifestUrl;
+  manifestLink.download = `manifest-${timestamp}.json`;
+  document.body.appendChild(manifestLink);
+  manifestLink.click();
+  manifestLink.remove();
+  URL.revokeObjectURL(manifestUrl);
+}
+
+function downloadSingleAsset() {
+  const assetId = app.activeAssetId;
+  if (!assetId) {
+    window.alert("先选一个资产再导出。");
+    return;
+  }
+
+  const asset = app.doc.assets?.[assetId];
+  if (!asset || asset.archived) {
+    app.activeAssetId = null;
+    render();
+    window.alert("资产不存在或已删除。");
+    return;
+  }
+
+  const data = serializeSingleAssetToSvgString(asset);
+  const blob = new Blob([data], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const safeName = String(asset.name ?? assetId).replace(/[\/:*?"<>|]/g, "_");
+  a.download = `${safeName}.svg`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 function renameActiveAsset() {
   const assetId = app.activeAssetId;
   if (!assetId) {
@@ -210,6 +330,74 @@ function renameActiveAsset() {
   const next = window.prompt("资产名称：", asset.name ?? assetId);
   if (next === null) return;
   commit(renameAsset(app.doc, assetId, next));
+}
+
+function normalizeActiveAssetToCurrentColor() {
+  const assetId = app.activeAssetId;
+  if (!assetId) {
+    window.alert("先选一个资产再做 currentColor。");
+    return;
+  }
+
+  const asset = app.doc.assets?.[assetId];
+  if (!asset || asset.archived) {
+    app.activeAssetId = null;
+    render();
+    return;
+  }
+
+  try {
+    const { innerMarkup, replacedCount } = normalizeSvgInnerMarkupToCurrentColor(asset.innerMarkup);
+    if (replacedCount === 0) {
+      window.alert("这个资产没找到可替换的纯色 fill/stroke（渐变/多色会跳过）。");
+      return;
+    }
+    commit(upsertAssets(app.doc, [{ ...asset, innerMarkup }]));
+    window.alert(`已规范为 currentColor：替换 ${replacedCount} 处（可 Ctrl+Z 撤销）。`);
+  } catch (err) {
+    window.alert(`currentColor 处理失败：${String(err?.message ?? err)}`);
+  }
+}
+
+function normalizeAllAssetsToCurrentColor() {
+  const assets = Object.values(app.doc.assets ?? {});
+  if (!assets.length) {
+    window.alert("资产库是空的，没啥可规范 currentColor。");
+    return;
+  }
+
+  const ok = window.confirm(
+    `确认把 ${assets.length} 个资产的“纯色 fill/stroke”规范成 currentColor？\n\n说明：渐变/url()/多色复杂情况会跳过；这是做“可换主题单色图标库”的常用做法。\n\n可 Ctrl+Z 撤销。`
+  );
+  if (!ok) return;
+
+  const updated = [];
+  const errors = [];
+  let replacedTotal = 0;
+
+  for (const asset of assets) {
+    try {
+      const { innerMarkup, replacedCount } = normalizeSvgInnerMarkupToCurrentColor(asset.innerMarkup);
+      if (replacedCount === 0) continue;
+      replacedTotal += replacedCount;
+      updated.push({ ...asset, innerMarkup });
+    } catch (err) {
+      errors.push(`${asset.name ?? asset.id}: ${String(err?.message ?? err)}`);
+    }
+  }
+
+  if (!updated.length) {
+    window.alert("没找到可替换的纯色 fill/stroke（可能都已经是 currentColor，或都是渐变/多色）。");
+    return;
+  }
+
+  commit(upsertAssets(app.doc, updated));
+
+  if (errors.length) {
+    window.alert(["部分资产规范失败：", ...errors].join("\n"));
+  } else {
+    window.alert(`已规范为 currentColor：共替换 ${replacedTotal} 处。`);
+  }
 }
 
 function deleteActiveAsset() {
@@ -307,8 +495,9 @@ function setPositionEnabled(enabled) {
 }
 
 function syncInspectorFromSelection() {
-  const node = getSelectedNode(app.doc);
-  if (!node) {
+  const selectionIds = app.doc.selection?.nodeIds ?? [];
+
+  if (!selectionIds.length) {
     selectedInfo.textContent = "（无）";
     posXInput.value = "";
     posYInput.value = "";
@@ -322,21 +511,41 @@ function syncInspectorFromSelection() {
     return;
   }
 
-  selectedInfo.textContent = `${node.type} · ${node.id}`;
-  posXInput.value = String(Math.round(node.transform.x));
-  posYInput.value = String(Math.round(node.transform.y));
+  if (selectionIds.length > 1) {
+    selectedInfo.textContent = `（多选 ${selectionIds.length} 个）`;
+    posXInput.value = "";
+    posYInput.value = "";
+    setPositionEnabled(false);
 
-  fillInput.value = normalizeColor(node.style.fill ?? "#4f8cff");
-  strokeInput.value = normalizeColor(node.style.stroke ?? "#e6e8ff");
-  strokeWidthInput.value = String(Number(node.style.strokeWidth ?? 2));
-  opacityInput.value = String(Number(node.style.opacity ?? 1));
+    textValueInput.disabled = true;
+    textValueInput.value = "";
+    if (textFontSizeInput) {
+      textFontSizeInput.value = "";
+      textFontSizeInput.disabled = true;
+    }
+    return;
+  }
+
+  const node = getSelectedNode(app.doc);
+  if (!node) return;
+
+  selectedInfo.textContent = `${node.type} · ${node.id}`;
+  if (document.activeElement !== posXInput) posXInput.value = String(Math.round(node.transform.x));
+  if (document.activeElement !== posYInput) posYInput.value = String(Math.round(node.transform.y));
+
+  if (document.activeElement !== fillInput) fillInput.value = normalizeColor(node.style.fill ?? "#4f8cff");
+  if (document.activeElement !== strokeInput) strokeInput.value = normalizeColor(node.style.stroke ?? "#e6e8ff");
+  if (document.activeElement !== strokeWidthInput) strokeWidthInput.value = String(Number(node.style.strokeWidth ?? 2));
+  if (document.activeElement !== opacityInput) opacityInput.value = String(Number(node.style.opacity ?? 1));
 
   if (node.type === "text") {
     textValueInput.disabled = false;
-    textValueInput.value = String(node.data.content ?? "");
+    if (document.activeElement !== textValueInput) textValueInput.value = String(node.data.content ?? "");
     if (textFontSizeInput) {
       textFontSizeInput.disabled = false;
-      textFontSizeInput.value = String(Number(node.data.fontSize ?? 42));
+      if (document.activeElement !== textFontSizeInput) {
+        textFontSizeInput.value = String(Number(node.data.fontSize ?? 42));
+      }
     }
   } else {
     textValueInput.disabled = true;
@@ -365,11 +574,16 @@ function syncPlacementInfo() {
 
   const canManageActive = Boolean(asset && !asset.archived);
   const libraryCount = Object.values(app.doc.assets ?? {}).filter((a) => a && !a.archived).length;
+  const assetCount = Object.keys(app.doc.assets ?? {}).length;
 
   if (btnRenameAsset) btnRenameAsset.disabled = !canManageActive;
+  if (btnAssetCurrentColor) btnAssetCurrentColor.disabled = !canManageActive;
+  if (btnAllAssetsCurrentColor) btnAllAssetsCurrentColor.disabled = assetCount === 0;
   if (btnDeleteAsset) btnDeleteAsset.disabled = !canManageActive;
   if (btnClearAssets) btnClearAssets.disabled = libraryCount === 0;
   if (btnClearPlacement) btnClearPlacement.disabled = !app.activeAssetId;
+  if (btnExportAssetPack) btnExportAssetPack.disabled = libraryCount === 0;
+  if (btnExportSingleAsset) btnExportSingleAsset.disabled = !canManageActive;
 }
 
 function mergeHistoryDoc(nextDoc, currentDoc) {
@@ -381,6 +595,7 @@ function mergeHistoryDoc(nextDoc, currentDoc) {
 }
 
 function undo() {
+  flushMergedHistory();
   if (app.dragging || app.panning) return;
   const prev = app.history.past.pop();
   if (!prev) return;
@@ -389,6 +604,7 @@ function undo() {
 }
 
 function redo() {
+  flushMergedHistory();
   if (app.dragging || app.panning) return;
   const next = app.history.future.pop();
   if (!next) return;
@@ -496,6 +712,22 @@ function selectNode(nodeId) {
   commit(setSelection(app.doc, [id]), { recordHistory: false });
 }
 
+function toggleNodeSelection(nodeId) {
+  const id = String(nodeId ?? "");
+  if (!id) return;
+
+  const current = app.doc.selection?.nodeIds ?? [];
+  const idx = current.indexOf(id);
+  const next = idx >= 0 ? [...current.slice(0, idx), ...current.slice(idx + 1)] : [...current, id];
+  commit(setSelection(app.doc, next), { recordHistory: false });
+}
+
+function isNodeSelected(nodeId) {
+  const id = String(nodeId ?? "");
+  if (!id) return false;
+  return (app.doc.selection?.nodeIds ?? []).includes(id);
+}
+
 function clearSelectionIfAny() {
   if (!app.doc.selection.nodeIds.length) return;
   commit(clearSelection(app.doc), { recordHistory: false });
@@ -521,14 +753,29 @@ function stopPan(pointerId) {
   app.panning = null;
 }
 
-function startDrag(nodeId, pointerId, clientX, clientY) {
-  const node = app.doc.nodes.find((n) => n.id === nodeId);
-  if (!node) return;
-  const p = clientToSvgPoint(svg, clientX, clientY);
+function startDrag(anchorNodeId, pointerId, clientX, clientY) {
+  flushMergedHistory();
+
+  const ids = app.doc.selection?.nodeIds ?? [];
+  if (!ids.length) return;
+  const anchorId = String(anchorNodeId ?? "");
+
+  const startSvg = clientToSvgPoint(svg, clientX, clientY);
+  const startById = {};
+
+  for (const id of ids) {
+    const node = app.doc.nodes.find((n) => n.id === id);
+    if (!node) continue;
+    startById[id] = { x: Number(node.transform.x ?? 0), y: Number(node.transform.y ?? 0) };
+  }
+
   app.dragging = {
     pointerId,
-    nodeId,
-    offset: { x: p.x - node.transform.x, y: p.y - node.transform.y },
+    anchorNodeId: anchorId,
+    selectSingleOnClick: ids.length > 1 && anchorId && ids.includes(anchorId),
+    startSvg,
+    nodeIds: ids,
+    startById,
     historyRecorded: false
   };
 }
@@ -540,15 +787,28 @@ function updateDrag(clientX, clientY) {
     app.dragging.historyRecorded = true;
   }
   const p = clientToSvgPoint(svg, clientX, clientY);
-  const nextX = p.x - app.dragging.offset.x;
-  const nextY = p.y - app.dragging.offset.y;
-  commit(updateNodeTransform(app.doc, app.dragging.nodeId, { x: nextX, y: nextY }), { recordHistory: false });
+  const dx = p.x - app.dragging.startSvg.x;
+  const dy = p.y - app.dragging.startSvg.y;
+
+  let next = app.doc;
+  for (const id of app.dragging.nodeIds ?? []) {
+    const start = app.dragging.startById?.[id];
+    if (!start) continue;
+    next = updateNodeTransform(next, id, { x: start.x + dx, y: start.y + dy });
+  }
+
+  commit(next, { recordHistory: false });
 }
 
-function stopDrag(pointerId) {
+function stopDrag(pointerId, { considerClick = true } = {}) {
   if (!app.dragging) return;
   if (app.dragging.pointerId !== pointerId) return;
+  const { anchorNodeId, selectSingleOnClick, historyRecorded } = app.dragging;
   app.dragging = null;
+
+  if (considerClick && selectSingleOnClick && !historyRecorded && anchorNodeId) {
+    selectNode(anchorNodeId);
+  }
 }
 
 function pickNodeIdFromEventTarget(target) {
@@ -597,7 +857,11 @@ btnExportSprite?.addEventListener("click", downloadSprite);
 btnReset.addEventListener("click", resetAll);
 
 btnImportSvg?.addEventListener("click", () => fileImportSvg?.click());
+btnExportAssetPack?.addEventListener("click", downloadAssetPack);
+btnExportSingleAsset?.addEventListener("click", downloadSingleAsset);
 btnRenameAsset?.addEventListener("click", renameActiveAsset);
+btnAssetCurrentColor?.addEventListener("click", normalizeActiveAssetToCurrentColor);
+btnAllAssetsCurrentColor?.addEventListener("click", normalizeAllAssetsToCurrentColor);
 btnDeleteAsset?.addEventListener("click", deleteActiveAsset);
 btnClearAssets?.addEventListener("click", clearAllAssets);
 btnClearPlacement?.addEventListener("click", () => {
@@ -646,59 +910,156 @@ fileImportSvg?.addEventListener("change", async () => {
 });
 
 placementSizeInput?.addEventListener("input", () => {
+  if (!placementSizeInput) return;
+  const raw = String(placementSizeInput.value ?? "");
+  if (!raw.trim()) return;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return;
   const nextSize = clamp(Number(placementSizeInput.value || 128), 8, 4096);
-  commit(setSettings(app.doc, { placementSize: nextSize }));
+  if (app.doc.settings?.placementSize === nextSize) return;
+  commitMerged(setSettings(app.doc, { placementSize: nextSize }), { key: "placementSize" });
 });
 
 posXInput.addEventListener("input", () => {
-  const nodeId = getSelectedNodeId(app.doc);
-  if (!nodeId) return;
-  commit(updateNodeTransform(app.doc, nodeId, { x: Number(posXInput.value || 0) }));
+  const node = getSelectedNode(app.doc);
+  if (!node) return;
+  const raw = String(posXInput.value ?? "");
+  if (!raw.trim()) return;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return;
+  const x = Math.round(parsed);
+  if (node.transform.x === x) return;
+  commitMerged(updateNodeTransform(app.doc, node.id, { x }), { key: `posX:${node.id}` });
 });
 
 posYInput.addEventListener("input", () => {
-  const nodeId = getSelectedNodeId(app.doc);
-  if (!nodeId) return;
-  commit(updateNodeTransform(app.doc, nodeId, { y: Number(posYInput.value || 0) }));
+  const node = getSelectedNode(app.doc);
+  if (!node) return;
+  const raw = String(posYInput.value ?? "");
+  if (!raw.trim()) return;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return;
+  const y = Math.round(parsed);
+  if (node.transform.y === y) return;
+  commitMerged(updateNodeTransform(app.doc, node.id, { y }), { key: `posY:${node.id}` });
 });
 
 fillInput.addEventListener("input", () => {
-  const nodeId = getSelectedNodeId(app.doc);
-  if (!nodeId) return;
-  commit(updateNodeStyle(app.doc, nodeId, { fill: fillInput.value }));
+  const ids = app.doc.selection?.nodeIds ?? [];
+  if (!ids.length) return;
+  const next = String(fillInput.value ?? "").trim();
+  if (!next) return;
+
+  let changed = false;
+  let nextDoc = app.doc;
+  for (const id of ids) {
+    const node = nextDoc.nodes.find((n) => n.id === id);
+    if (!node) continue;
+    if (node.style.fill === next) continue;
+    nextDoc = updateNodeStyle(nextDoc, id, { fill: next });
+    changed = true;
+  }
+  if (!changed) return;
+
+  commitMerged(nextDoc, { key: `fill:${ids.slice().sort().join(",")}` });
 });
 
 strokeInput.addEventListener("input", () => {
-  const nodeId = getSelectedNodeId(app.doc);
-  if (!nodeId) return;
-  commit(updateNodeStyle(app.doc, nodeId, { stroke: strokeInput.value }));
+  const ids = app.doc.selection?.nodeIds ?? [];
+  if (!ids.length) return;
+  const next = String(strokeInput.value ?? "").trim();
+  if (!next) return;
+
+  let changed = false;
+  let nextDoc = app.doc;
+  for (const id of ids) {
+    const node = nextDoc.nodes.find((n) => n.id === id);
+    if (!node) continue;
+    if (node.style.stroke === next) continue;
+    nextDoc = updateNodeStyle(nextDoc, id, { stroke: next });
+    changed = true;
+  }
+  if (!changed) return;
+
+  commitMerged(nextDoc, { key: `stroke:${ids.slice().sort().join(",")}` });
 });
 
 strokeWidthInput.addEventListener("input", () => {
-  const nodeId = getSelectedNodeId(app.doc);
-  if (!nodeId) return;
-  commit(updateNodeStyle(app.doc, nodeId, { strokeWidth: Number(strokeWidthInput.value || 0) }));
+  const ids = app.doc.selection?.nodeIds ?? [];
+  if (!ids.length) return;
+  const raw = String(strokeWidthInput.value ?? "");
+  if (!raw.trim()) return;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return;
+  const next = Math.max(0, Math.round(parsed));
+
+  let changed = false;
+  let nextDoc = app.doc;
+  for (const id of ids) {
+    const node = nextDoc.nodes.find((n) => n.id === id);
+    if (!node) continue;
+    if (node.style.strokeWidth === next) continue;
+    nextDoc = updateNodeStyle(nextDoc, id, { strokeWidth: next });
+    changed = true;
+  }
+  if (!changed) return;
+
+  commitMerged(nextDoc, { key: `strokeWidth:${ids.slice().sort().join(",")}` });
 });
 
 opacityInput.addEventListener("input", () => {
-  const nodeId = getSelectedNodeId(app.doc);
-  if (!nodeId) return;
-  commit(updateNodeStyle(app.doc, nodeId, { opacity: clamp(Number(opacityInput.value || 1), 0, 1) }));
+  const ids = app.doc.selection?.nodeIds ?? [];
+  if (!ids.length) return;
+  const raw = String(opacityInput.value ?? "");
+  if (!raw.trim()) return;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return;
+  const next = clamp(parsed, 0, 1);
+
+  let changed = false;
+  let nextDoc = app.doc;
+  for (const id of ids) {
+    const node = nextDoc.nodes.find((n) => n.id === id);
+    if (!node) continue;
+    if (node.style.opacity === next) continue;
+    nextDoc = updateNodeStyle(nextDoc, id, { opacity: next });
+    changed = true;
+  }
+  if (!changed) return;
+
+  commitMerged(nextDoc, { key: `opacity:${ids.slice().sort().join(",")}` });
 });
 
 textValueInput.addEventListener("input", () => {
   const node = getSelectedNode(app.doc);
   if (!node || node.type !== "text") return;
-  commit(updateNodeData(app.doc, node.id, { content: textValueInput.value }));
+  const next = String(textValueInput.value ?? "");
+  if (String(node.data.content ?? "") === next) return;
+  commitMerged(updateNodeData(app.doc, node.id, { content: next }), { key: `textValue:${node.id}` });
 });
 
 textFontSizeInput?.addEventListener("input", () => {
   const node = getSelectedNode(app.doc);
   if (!node || node.type !== "text") return;
-  if (textFontSizeInput.value === "") return;
-  const nextSize = clamp(Number(textFontSizeInput.value || 42), 1, 4096);
-  commit(updateNodeData(app.doc, node.id, { fontSize: nextSize }));
+  if (!textFontSizeInput) return;
+  const raw = String(textFontSizeInput.value ?? "");
+  if (!raw.trim()) return;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return;
+  const nextSize = clamp(Math.round(parsed), 1, 4096);
+  if (Number(node.data.fontSize ?? 42) === nextSize) return;
+  commitMerged(updateNodeData(app.doc, node.id, { fontSize: nextSize }), { key: `textFontSize:${node.id}` });
 });
+
+placementSizeInput?.addEventListener("blur", flushMergedHistory);
+posXInput.addEventListener("blur", flushMergedHistory);
+posYInput.addEventListener("blur", flushMergedHistory);
+fillInput.addEventListener("blur", flushMergedHistory);
+strokeInput.addEventListener("blur", flushMergedHistory);
+strokeWidthInput.addEventListener("blur", flushMergedHistory);
+opacityInput.addEventListener("blur", flushMergedHistory);
+textValueInput.addEventListener("blur", flushMergedHistory);
+textFontSizeInput?.addEventListener("blur", flushMergedHistory);
 
 svg.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -707,10 +1068,14 @@ svg.addEventListener(
   (e) => {
     e.preventDefault();
 
-    const hasSelection = (app.doc.selection.nodeIds?.length ?? 0) > 0;
-    if (hasSelection && e.shiftKey) {
+    const selectionIds = app.doc.selection?.nodeIds ?? [];
+    if (selectionIds.length && e.shiftKey) {
       const factor = e.deltaY > 0 ? 0.92 : 1.08;
-      commit(scaleSelectedNodes(app.doc, factor));
+      const next =
+        selectionIds.length > 1
+          ? scaleSelectedNodesAsGroup(app.doc, factor)
+          : scaleSelectedNodes(app.doc, factor);
+      commit(next);
       return;
     }
 
@@ -729,6 +1094,12 @@ svg.addEventListener("pointerdown", (e) => {
 
   const nodeId = pickNodeIdFromEventTarget(e.target);
 
+  const multiSelect = e.shiftKey || e.ctrlKey || e.metaKey;
+  if (nodeId && multiSelect) {
+    toggleNodeSelection(nodeId);
+    return;
+  }
+
   if (!nodeId && !app.spaceDown && app.activeAssetId) {
     placeActiveAssetAt(e.clientX, e.clientY);
     return;
@@ -741,7 +1112,7 @@ svg.addEventListener("pointerdown", (e) => {
     return;
   }
 
-  selectNode(nodeId);
+  if (!isNodeSelected(nodeId)) selectNode(nodeId);
   startDrag(nodeId, e.pointerId, e.clientX, e.clientY);
   svg.setPointerCapture(e.pointerId);
 });
@@ -758,7 +1129,7 @@ svg.addEventListener("pointerup", (e) => {
 
 svg.addEventListener("pointercancel", (e) => {
   stopPan(e.pointerId);
-  stopDrag(e.pointerId);
+  stopDrag(e.pointerId, { considerClick: false });
 });
 
 window.addEventListener("keydown", (e) => {

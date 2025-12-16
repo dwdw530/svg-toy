@@ -30,8 +30,40 @@
 
           <div class="asset-controls">
             <button class="btn" id="btnImportSvg" type="button">导入 SVG</button>
+            <button
+              class="btn"
+              id="btnExportAssetPack"
+              type="button"
+              title="一键下载资产包：sprite.svg + manifest.json（两个文件，文件名带相同时间戳方便配对）"
+            >
+              导出资产包
+            </button>
+            <button
+              class="btn"
+              id="btnExportSingleAsset"
+              type="button"
+              title="把当前选中的资产导出为单独的 SVG 文件（方便发给设计师或落盘到其他仓库）"
+            >
+              导出选中资产
+            </button>
             <button class="btn" id="btnRenameAsset" type="button">重命名</button>
             <button class="btn btn-ghost" id="btnDeleteAsset" type="button">删除</button>
+            <button
+              class="btn"
+              id="btnAssetCurrentColor"
+              type="button"
+              title="把当前选中资产里可替换的纯色 fill/stroke 规范成 currentColor，让图标能跟随主题/一键换色（渐变/多色会跳过，可 Ctrl+Z 撤销）。"
+            >
+              单色 currentColor
+            </button>
+            <button
+              class="btn btn-ghost"
+              id="btnAllAssetsCurrentColor"
+              type="button"
+              title="对资产库所有资产执行 currentColor 规范化（只替换纯色 fill/stroke；渐变/多色会跳过，可 Ctrl+Z 撤销）。"
+            >
+              全资产 currentColor
+            </button>
             <button class="btn btn-ghost" id="btnClearAssets" type="button">清空资产库</button>
             <button class="btn btn-ghost" id="btnClearPlacement" type="button">取消放置</button>
             <input id="fileImportSvg" type="file" accept=".svg" multiple hidden />
@@ -81,13 +113,13 @@
                   <path
                     d="M 40 0 L 0 0 0 40"
                     fill="none"
-                    stroke="rgba(255,255,255,0.08)"
+                    stroke="rgba(0,0,0,0.1)"
                     stroke-width="1"
                   />
                 </pattern>
               </defs>
               <defs id="assetDefs"></defs>
-              <rect x="-2000" y="-2000" width="5000" height="5000" fill="#0b1020" />
+              <rect x="-2000" y="-2000" width="5000" height="5000" fill="#ffffff" />
               <rect x="-2000" y="-2000" width="5000" height="5000" fill="url(#grid)" />
               <g id="scene"></g>
             </svg>

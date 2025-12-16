@@ -82,6 +82,8 @@ function renderUseNode(node, { forExport }) {
     height: node.data.height
   });
   applyStyleAttrs(el, node.style);
+  const color = node.style?.fill && node.style.fill !== "none" ? node.style.fill : node.style?.stroke;
+  if (color && color !== "none") el.setAttribute("color", String(color));
   if (!forExport) {
     el.classList.add("shape");
     el.dataset.nodeId = node.id;

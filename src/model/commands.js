@@ -244,3 +244,168 @@ export function scaleSelectedNodes(doc, factor, { minSize = 1, maxSize = 4096 } 
   }
   return next;
 }
+
+function nodeBounds(node) {
+  if (!node) return null;
+
+  if (node.type === "rect" || node.type === "use") {
+    const x = Number(node.transform?.x ?? 0);
+    const y = Number(node.transform?.y ?? 0);
+    const w = Number(node.data?.width ?? 0);
+    const h = Number(node.data?.height ?? 0);
+    if (![x, y, w, h].every(Number.isFinite)) return null;
+    if (!(w > 0) || !(h > 0)) return null;
+    return { minX: x, minY: y, maxX: x + w, maxY: y + h };
+  }
+
+  if (node.type === "circle") {
+    const cx = Number(node.transform?.x ?? 0);
+    const cy = Number(node.transform?.y ?? 0);
+    const r = Number(node.data?.r ?? 0);
+    if (![cx, cy, r].every(Number.isFinite)) return null;
+    if (!(r > 0)) return null;
+    return { minX: cx - r, minY: cy - r, maxX: cx + r, maxY: cy + r };
+  }
+
+  if (node.type === "text") {
+    const x = Number(node.transform?.x ?? 0);
+    const y = Number(node.transform?.y ?? 0);
+    const fs = Number(node.data?.fontSize ?? 42);
+    const size = Number.isFinite(fs) && fs > 0 ? fs : 42;
+    const half = size / 2;
+    if (![x, y].every(Number.isFinite)) return null;
+    return { minX: x - half, minY: y - half, maxX: x + half, maxY: y + half };
+  }
+
+  return null;
+}
+
+function scaleNodeAboutPoint(node, factor, { cx, cy, minSize, maxSize }) {
+  if (!node) return node;
+  const f = Number(factor);
+  if (!Number.isFinite(f) || f <= 0) return node;
+
+  if (node.type === "rect") {
+    const x0 = Number(node.transform?.x ?? 0);
+    const y0 = Number(node.transform?.y ?? 0);
+    const w0 = Number(node.data?.width ?? 0);
+    const h0 = Number(node.data?.height ?? 0);
+    if (![x0, y0, w0, h0].every(Number.isFinite)) return node;
+    if (!(w0 > 0) || !(h0 > 0)) return node;
+
+    const c0x = x0 + w0 / 2;
+    const c0y = y0 + h0 / 2;
+    const c1x = cx + (c0x - cx) * f;
+    const c1y = cy + (c0y - cy) * f;
+
+    const w1 = clamp(w0 * f, minSize, maxSize);
+    const h1 = clamp(h0 * f, minSize, maxSize);
+    const x1 = c1x - w1 / 2;
+    const y1 = c1y - h1 / 2;
+
+    const rx0 = Number(node.data?.rx ?? 0);
+    const rxLimit = Math.max(0, Math.min(w1, h1) / 2);
+    const rx1 = Number.isFinite(rx0) ? clamp(rx0 * f, 0, rxLimit) : node.data?.rx;
+
+    return {
+      ...node,
+      transform: { ...node.transform, x: x1, y: y1 },
+      data: { ...node.data, width: w1, height: h1, rx: rx1 }
+    };
+  }
+
+  if (node.type === "use") {
+    const x0 = Number(node.transform?.x ?? 0);
+    const y0 = Number(node.transform?.y ?? 0);
+    const w0 = Number(node.data?.width ?? 0);
+    const h0 = Number(node.data?.height ?? 0);
+    if (![x0, y0, w0, h0].every(Number.isFinite)) return node;
+    if (!(w0 > 0) || !(h0 > 0)) return node;
+
+    const c0x = x0 + w0 / 2;
+    const c0y = y0 + h0 / 2;
+    const c1x = cx + (c0x - cx) * f;
+    const c1y = cy + (c0y - cy) * f;
+
+    const w1 = clamp(w0 * f, minSize, maxSize);
+    const h1 = clamp(h0 * f, minSize, maxSize);
+    const x1 = c1x - w1 / 2;
+    const y1 = c1y - h1 / 2;
+
+    return {
+      ...node,
+      transform: { ...node.transform, x: x1, y: y1 },
+      data: { ...node.data, width: w1, height: h1 }
+    };
+  }
+
+  if (node.type === "circle") {
+    const x0 = Number(node.transform?.x ?? 0);
+    const y0 = Number(node.transform?.y ?? 0);
+    const r0 = Number(node.data?.r ?? 0);
+    if (![x0, y0, r0].every(Number.isFinite)) return node;
+    if (!(r0 > 0)) return node;
+
+    const x1 = cx + (x0 - cx) * f;
+    const y1 = cy + (y0 - cy) * f;
+    const r1 = clamp(r0 * f, minSize, maxSize);
+
+    return { ...node, transform: { ...node.transform, x: x1, y: y1 }, data: { ...node.data, r: r1 } };
+  }
+
+  if (node.type === "text") {
+    const x0 = Number(node.transform?.x ?? 0);
+    const y0 = Number(node.transform?.y ?? 0);
+    if (![x0, y0].every(Number.isFinite)) return node;
+
+    const fs0 = Number(node.data?.fontSize ?? 42);
+    const base = Number.isFinite(fs0) && fs0 > 0 ? fs0 : 42;
+    const fs1 = clamp(base * f, minSize, maxSize);
+
+    const x1 = cx + (x0 - cx) * f;
+    const y1 = cy + (y0 - cy) * f;
+    return {
+      ...node,
+      transform: { ...node.transform, x: x1, y: y1 },
+      data: { ...node.data, fontSize: fs1 }
+    };
+  }
+
+  return node;
+}
+
+export function scaleSelectedNodesAsGroup(doc, factor, { minSize = 1, maxSize = 4096 } = {}) {
+  const ids = doc.selection.nodeIds ?? [];
+  if (ids.length < 2) return scaleSelectedNodes(doc, factor, { minSize, maxSize });
+
+  const idSet = new Set(ids);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const node of doc.nodes ?? []) {
+    if (!idSet.has(node.id)) continue;
+    const b = nodeBounds(node);
+    if (!b) continue;
+    if (b.minX < minX) minX = b.minX;
+    if (b.minY < minY) minY = b.minY;
+    if (b.maxX > maxX) maxX = b.maxX;
+    if (b.maxY > maxY) maxY = b.maxY;
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return doc;
+
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+
+  let changed = false;
+  const nextNodes = (doc.nodes ?? []).map((node) => {
+    if (!idSet.has(node.id)) return node;
+    const next = scaleNodeAboutPoint(node, factor, { cx, cy, minSize, maxSize });
+    if (next !== node) changed = true;
+    return next;
+  });
+
+  return changed ? { ...doc, nodes: nextNodes } : doc;
+}

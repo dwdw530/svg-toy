@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__serena__check_onboarding_performed",
+      "mcp__serena__list_dir",
+      "Skill(context-resume)",
+      "Bash(cat:*)",
+      "Bash(node --check:*)",
+      "Skill(context-save)",
+      "Skill(frontend-design)",
+      "Bash(bash -c \"mkdir -p ''D:/vscode_workspace/svg_project/docs/context-sessions''\")"
+    ]
+  }
+}
